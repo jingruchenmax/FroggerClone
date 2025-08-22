@@ -123,7 +123,7 @@ public class ObjectSpawner : MonoBehaviour
         // How many would have spawned in the preheat window?
         int count = Mathf.FloorToInt(preheatSeconds / gap);
 
-        // Oldest first so nearer ones don’t get blocked when using physics
+        // Oldest first so nearer ones donï¿½t get blocked when using physics
         for (int i = count; i >= 1; i--)
         {
             if (maxAlive > 0 && _alive >= maxAlive) break;
@@ -162,7 +162,7 @@ public class ObjectSpawner : MonoBehaviour
         // If preheating, push it backward along the motion path so it looks mid-stream
         if (backTimeSeconds > 0f)
         {
-            // Convert world offset to local so we don’t break the hierarchy math
+            // Convert world offset to local so we donï¿½t break the hierarchy math
             Vector3 worldOffset = -EffectiveMoveSpeed * backTimeSeconds; // rewind along path
             Vector3 localOffset = parent != null
                 ? parent.InverseTransformVector(worldOffset)
@@ -209,17 +209,20 @@ public class ObjectSpawner : MonoBehaviour
         {
             // return control to animator
             anim.speed = 1f;
-            if (!string.IsNullOrEmpty(juicyStateName))
-            {
-                try { anim.Play(juicyStateName, 0, 0f); anim.Update(0f); }
-                catch { /* ignore */ }
-            }
+                if (!string.IsNullOrEmpty(juicyStateName) && anim.gameObject.activeInHierarchy)
+                {
+                    try { anim.Play(juicyStateName, 0, 0f); anim.Update(0f); }
+                    catch { /* ignore */ }
+                }
         }
         else
         {
             // lock into "No Juicy"
-            try { if (!string.IsNullOrEmpty(noJuicyStateName)) { anim.Play(noJuicyStateName, 0, 0f); anim.Update(0f); } }
-            catch { /* ignore invalid state */ }
+            if (!string.IsNullOrEmpty(noJuicyStateName) && anim.gameObject.activeInHierarchy)
+            {
+                try { anim.Play(noJuicyStateName, 0, 0f); anim.Update(0f); }
+                catch { /* ignore invalid state */ }
+            }
             anim.speed = 0f; // hold pose
         }
     }
@@ -235,7 +238,7 @@ public class ObjectSpawner : MonoBehaviour
         if (juicy)
         {
             anim.speed = 1f;
-            if (!string.IsNullOrEmpty(juicyStateName))
+            if (!string.IsNullOrEmpty(juicyStateName) && anim.gameObject.activeInHierarchy && HasAnimatorState(anim, juicyStateName))
             {
                 try { anim.Play(juicyStateName, 0, 0f); }
                 catch { /* ignore */ }
@@ -243,11 +246,28 @@ public class ObjectSpawner : MonoBehaviour
         }
         else
         {
-            try { if (!string.IsNullOrEmpty(noJuicyStateName)) anim.Play(noJuicyStateName, 0, 0f); }
-            catch { /* ignore */ }
+            if (!string.IsNullOrEmpty(noJuicyStateName) && anim.gameObject.activeInHierarchy && HasAnimatorState(anim, noJuicyStateName))
+            {
+                try { anim.Play(noJuicyStateName, 0, 0f); }
+                catch { /* ignore */ }
+            }
             anim.Update(0f);
             anim.speed = 0f; // freeze in non-juicy
         }
+    }
+
+    // Helper to check if an Animator has a state in the base layer
+    private bool HasAnimatorState(Animator animator, string stateName)
+    {
+        if (animator == null || string.IsNullOrEmpty(stateName)) return false;
+        var controller = animator.runtimeAnimatorController;
+        if (controller == null) return false;
+        foreach (var clip in controller.animationClips)
+        {
+            if (clip != null && clip.name == stateName)
+                return true;
+        }
+        return false;
     }
 
     // Inside ObjectSpawner.cs

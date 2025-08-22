@@ -6786,8 +6786,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: fa7f4c211bb62a948a89b8e67c81998f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  isJuicy: 0
-  globalDifficulty: 1
+  isJuicy: 1
+  globalDifficulty: 1.5
 --- !u!1 &680746247
 GameObject:
   m_ObjectHideFlags: 0
