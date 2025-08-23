@@ -5,6 +5,9 @@ using UnityEngine;
 [RequireComponent(typeof(Collider))]
 public class PlayerController : MonoBehaviour
 {
+    // Grace period timer for water after leaving wood/land (non-juicy mode)
+    private float _waterGraceTimer = 0f;
+    private const float WaterGracePeriod = 0.05f;
     [Header("Mode")]
     public bool juicy = true; // true = rolling; false = instant grid jump
 
@@ -92,6 +95,14 @@ public class PlayerController : MonoBehaviour
     {
         if (!juicy)
         {
+            // Set Rigidbody to kinematic and disable gravity
+            _rb.isKinematic = true;
+            _rb.useGravity = false;
+            // Set Collider to trigger
+            var col = GetComponent<Collider>();
+            if (col != null)
+                col.isTrigger = true;
+
             // Disable Animator safely
             var anim = GetComponent<Animator>();
             if (anim != null)
@@ -123,6 +134,28 @@ public class PlayerController : MonoBehaviour
                 Vector3 to = from + dir * stepSize;
                 transform.position = to;
                 EmitMove(from, to, dir); // <<< fire movement event
+            }
+
+            // Water grace period logic
+            if (_waterGraceTimer > 0f)
+            {
+                _waterGraceTimer -= Time.deltaTime;
+                if (_waterGraceTimer <= 0f)
+                {
+                    // After grace period, check if still only touching water
+                    Collider[] hits = Physics.OverlapSphere(transform.position, 0.25f);
+                    bool stillTouchingWater = false, touchingLandOrWood = false;
+                    foreach (var col in hits)
+                    {
+                        if (col.CompareTag("Water")) stillTouchingWater = true;
+                        if (col.CompareTag(landTag) || col.CompareTag(woodTag)) touchingLandOrWood = true;
+                    }
+                    if (stillTouchingWater && !touchingLandOrWood)
+                    {
+                        OnPlayerDeath?.Invoke();
+                        Respawn();
+                    }
+                }
             }
         }
     }
@@ -228,6 +261,20 @@ public class PlayerController : MonoBehaviour
 
     void OnTriggerEnter(Collider other)
     {
+        if (!juicy)
+        {
+            if (other.CompareTag(obstacleTag))
+            {
+                OnPlayerDeath?.Invoke();
+                Respawn();
+                EmitCollision(other, "Enter");
+                return;
+            }
+            HandleNonJuicyWaterLogic();
+            EmitCollision(other, "Enter");
+            return;
+        }
+
         if (other.CompareTag(obstacleTag))
         {
             // Fire death event immediately (existing behavior)
@@ -238,10 +285,6 @@ public class PlayerController : MonoBehaviour
                 if (!_isJuicyHitOffActive && _hitOffRoutine == null)
                     _hitOffRoutine = StartCoroutine(JuicyHitOffAndRespawn(other.transform, 0f));
             }
-            else
-            {
-                Respawn(); // non-juicy: instant
-            }
             return;
         }
 
@@ -249,6 +292,60 @@ public class PlayerController : MonoBehaviour
         HandleFinishOnEnter(other);
 
         EmitCollision(other, "Enter");
+    // Handles non-juicy mode water/land/wood/finish logic
+    void HandleNonJuicyWaterLogic()
+    {
+        // Get all overlapping colliders at the player's position
+        Collider[] hits = Physics.OverlapSphere(transform.position, 0.25f);
+        bool hasWater = false, hasLandOrWood = false, hasFinish = false;
+        Collider waterCol = null;
+        foreach (var hit in hits)
+        {
+            if (hit.CompareTag("Water")) { hasWater = true; waterCol = hit; }
+            if (hit.CompareTag(landTag) || hit.CompareTag(woodTag)) hasLandOrWood = true;
+            if (hit.CompareTag(finishTag)) hasFinish = true;
+        }
+
+        if (hasWater && hasLandOrWood)
+        {
+            // Continue with land/wood logic
+            foreach (var hit in hits)
+            {
+                if (hit.CompareTag(landTag) || hit.CompareTag(woodTag))
+                {
+                    HandleSurfaceOnEnter(hit);
+                    break;
+                }
+            }
+            return;
+        }
+        if (hasWater && hasFinish)
+        {
+            // Continue with finish logic only
+            foreach (var hit in hits)
+            {
+                if (hit.CompareTag(finishTag))
+                {
+                    HandleFinishOnEnter(hit);
+                    break;
+                }
+            }
+            return;
+        }
+        if (hasWater && !hasLandOrWood && !hasFinish)
+        {
+            // Water only: treat as obstacle and reset
+            OnPlayerDeath?.Invoke();
+            Respawn();
+            return;
+        }
+        // Otherwise, default logic
+        foreach (var hit in hits)
+        {
+            if (hit.CompareTag(landTag) || hit.CompareTag(woodTag)) HandleSurfaceOnEnter(hit);
+            if (hit.CompareTag(finishTag)) HandleFinishOnEnter(hit);
+        }
+    }
     }
 
     void OnCollisionExit(Collision collision)
@@ -268,8 +365,12 @@ public class PlayerController : MonoBehaviour
         ClearCarrierFollow();
 
         // Hard stop any motion first
-        _rb.velocity = Vector3.zero;
-        _rb.angularVelocity = Vector3.zero;
+        // Only set velocity/angVel if not kinematic
+        if (!_rb.isKinematic)
+        {
+            _rb.velocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+        }
 
         // Restore transform and constraints
         transform.SetPositionAndRotation(_spawnPos, _spawnRot);
@@ -323,7 +424,26 @@ public class PlayerController : MonoBehaviour
             ClearCarrierFollow();
             // Leaving land: release rotation freeze
             _rb.constraints = _originalConstraints;
+
+            // If non-juicy, check if still touching water
+            if (!juicy)
+            {
+                Collider[] hits = Physics.OverlapSphere(transform.position, 0.25f);
+                bool stillTouchingWater = false, touchingLandOrWood = false;
+                foreach (var col in hits)
+                {
+                    if (col.CompareTag("Water")) stillTouchingWater = true;
+                    if (col.CompareTag(landTag) || col.CompareTag(woodTag)) touchingLandOrWood = true;
+                }
+                if (stillTouchingWater && !touchingLandOrWood)
+                {
+                    // Start grace period timer
+                    _waterGraceTimer = WaterGracePeriod;
+                }
+            }
         }
+    // Reset water grace timer
+    _waterGraceTimer = 0f;
     }
 
 
@@ -428,7 +548,20 @@ public class PlayerController : MonoBehaviour
         var anim = GetComponent<Animator>();
         if (anim != null)
         {
-            anim.SetTrigger("HitOff");
+            // Check if the trigger parameter exists before setting it
+            bool hasHitOff = false;
+            foreach (var param in anim.parameters)
+            {
+                if (param.type == AnimatorControllerParameterType.Trigger && param.name == "HitOff")
+                {
+                    hasHitOff = true;
+                    break;
+                }
+            }
+            if (hasHitOff)
+            {
+                anim.SetTrigger("HitOff");
+            }
         }
         var ps = GetComponentInChildren<ParticleSystem>(true);
         if (ps != null) ps.Play(true);

@@ -280,12 +280,12 @@ public class LevelManager : MonoBehaviour
 
     void HandlePlayerFinish()
     {
-        // Bank run progress + final bonus 140, then respawn
-        int banked = _scoreRun + 140;
+        // Bank run progress + final bonus 150, then respawn
+        int banked = _scoreRun + 150;
         _scoreCommitted += banked;
         _scoreRun = 0;
 
-        Debug.Log($"[Score] Finish: +140 bonus, banked +{banked}. TotalCommitted={_scoreCommitted}");
+        Debug.Log($"[Score] Finish: +150 bonus, banked +{banked}. TotalCommitted={_scoreCommitted}");
         UpdateScoreText();
         UpdateHighScoreIfNeeded();
 
