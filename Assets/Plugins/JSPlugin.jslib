@@ -1,8 +1,9 @@
 mergeInto(LibraryManager.library, {
-  SendGameEventMessage: function(jsonPtr) {
-    var json = UTF8ToString(jsonPtr);
+  SendGameEventMessage: function(typePtr, jsonPtr) {
+    var type = UTF8ToString(typePtr);   // event type, e.g., "game_event" or "player_action"
+    var json = UTF8ToString(jsonPtr);   // payload as JSON string
     window.parent.postMessage({
-      type: "game_event",
+      type: type,
       payload: JSON.parse(json)
     }, "*");
   }

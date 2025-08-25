@@ -61,6 +61,11 @@ public class LevelManager : MonoBehaviour
     // === NEW: Finish GameObject reference ===
     GameObject _finishGO;
 
+    // Store per-level JSON data for aggregation at game completion
+    static readonly List<string> _allMovementJson = new();
+    static readonly List<string> _allCollisionsJson = new();
+    static readonly List<string> _allSummaryJson = new();
+
     void Awake()
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
@@ -308,6 +313,25 @@ public class LevelManager : MonoBehaviour
         }
         else
         {
+            // Game complete: send combined data for all levels
+            string movementComplete = "[" + string.Join(",", _allMovementJson) + "]";
+            string collisionsComplete = "[" + string.Join(",", _allCollisionsJson) + "]";
+            string summaryComplete = "[" + string.Join(",", _allSummaryJson) + "]";
+            WebGLBridge.PostJSON("movement_complete", movementComplete);
+            WebGLBridge.PostJSON("collisons_complete", collisionsComplete);
+            WebGLBridge.PostJSON("summary_complete", summaryComplete);
+
+            // Game summary data
+            var gameSummary = new GameSummary
+            {
+                totalPoints = _highScore,
+                totalTime = GetTotalTime(),
+                totalDeaths = GetTotalDeaths(),
+                levelsCleared = _allSummaryJson.Count // number of level completions
+            };
+            string gameSummaryJson = JsonUtility.ToJson(gameSummary, true);
+            WebGLBridge.PostJSON("game_complete", gameSummaryJson);
+
             SetFinishActive(true);
             if (_completeTextGO) _completeTextGO.SetActive(true);
             Debug.Log("[LevelManager] All resets consumed. Finish object revealed.");
@@ -354,7 +378,14 @@ public class LevelManager : MonoBehaviour
 #endif
 
         // Post summary to parent (WebGL)
-        WebGLBridge.PostJSON(summaryJson);
+        WebGLBridge.PostJSON("movement", movementJson);
+        WebGLBridge.PostJSON("collisons", collisionsJson);
+        WebGLBridge.PostJSON("summary", summaryJson);
+
+        // Store for final aggregation
+        _allMovementJson.Add(movementJson);
+        _allCollisionsJson.Add(collisionsJson);
+        _allSummaryJson.Add(summaryJson);
     }
 
     static void SafeWrite(string path, string content)
@@ -396,4 +427,35 @@ public class LevelManager : MonoBehaviour
     public int CurrentDeaths => _deaths;
     public int Lives => _lives;
     public int HighScore => _highScore;
+
+    [System.Serializable]
+    public class GameSummary
+    {
+        public int totalPoints;
+        public double totalTime;
+        public int totalDeaths;
+        public int levelsCleared;
+    }
+
+    double GetTotalTime()
+    {
+        double total = 0;
+        foreach (var summaryJson in _allSummaryJson)
+        {
+            var summary = JsonUtility.FromJson<LevelSummary>(summaryJson);
+            total += summary.durationSeconds;
+        }
+        return total;
+    }
+
+    int GetTotalDeaths()
+    {
+        int total = 0;
+        foreach (var summaryJson in _allSummaryJson)
+        {
+            var summary = JsonUtility.FromJson<LevelSummary>(summaryJson);
+            total += summary.deaths;
+        }
+        return total;
+    }
 }

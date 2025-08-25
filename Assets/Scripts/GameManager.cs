@@ -99,13 +99,7 @@ public class GameManager : MonoBehaviour
         {
             if (p == null) continue;
             p.juicy = isJuicy;
-
-            foreach (var anim in p.GetComponentsInChildren<Animator>(true))
-                if (anim != null) anim.enabled = isJuicy;
-
-            foreach (var ps in p.GetComponentsInChildren<ParticleSystem>(true))
-                if (ps != null && ps.gameObject != null)
-                    ps.gameObject.SetActive(isJuicy);
+            p.SetJuicyState();
         }
 
         // 3) Finish points ? visuals

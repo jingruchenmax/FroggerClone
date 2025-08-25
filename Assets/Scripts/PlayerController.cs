@@ -1,8 +1,7 @@
 using System.Collections;
 using UnityEngine;
 
-[RequireComponent(typeof(Rigidbody))]
-[RequireComponent(typeof(Collider))]
+// [RequireComponent(typeof(Collider))] // Collider still needed for triggers
 public class PlayerController : MonoBehaviour
 {
     // Grace period timer for water after leaving wood/land (non-juicy mode)
@@ -43,11 +42,11 @@ public class PlayerController : MonoBehaviour
     [Tooltip("Short sleep so the player fully settles on respawn before physics resumes.")]
     public float postRespawnSleep = 0.2f;
 
-    Rigidbody _rb;
+    // Rigidbody removed
     Vector3 _spawnPos;
     Quaternion _spawnRot;
     bool _isRolling;
-
+    private bool _canMove = true;
     // --- Parallel carry (no parenting) ---
     bool _onCarrier;
     Transform _carrierTf;
@@ -55,6 +54,7 @@ public class PlayerController : MonoBehaviour
     Vector3 _carrierSpeed; // preferred: from ObjectController.Speed
 
     // Remember original constraints so we can restore on leaving land / respawn
+    Rigidbody _rb;
     RigidbodyConstraints _originalConstraints;
 
     // Internal guard to avoid multiple death triggers while flying off
@@ -71,10 +71,17 @@ public class PlayerController : MonoBehaviour
     public static System.Action OnPlayerReachedFinish;             // when touching FinishPoint
     // ===========================================
 
+    Vector3 dir;
+    // Axis debouncing state
+    private float prevHorizontal = 0f;
+    private float prevVertical = 0f;
+    // Grid-based MovePosition state
+    private Vector3 targetPosition;
+    private bool isMoving = false;
+
     void Awake()
     {
         _rb = GetComponent<Rigidbody>();
-
         if (spawnPoint != null)
         {
             _spawnPos = spawnPoint.position;
@@ -85,19 +92,20 @@ public class PlayerController : MonoBehaviour
             _spawnPos = transform.position;
             _spawnRot = transform.rotation;
         }
-
-        _rb.interpolation = RigidbodyInterpolation.Interpolate;
-        _rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+        targetPosition = transform.position;
         _originalConstraints = _rb.constraints;
     }
 
     private void Start()
     {
+        SetJuicyState();
+        Respawn();
+    }
+
+    public void SetJuicyState()
+    {
         if (!juicy)
         {
-            // Set Rigidbody to kinematic and disable gravity
-            _rb.isKinematic = true;
-            _rb.useGravity = false;
             // Set Collider to trigger
             var col = GetComponent<Collider>();
             if (col != null)
@@ -114,28 +122,66 @@ public class PlayerController : MonoBehaviour
                 ps.gameObject.SetActive(false);
         }
     }
-
     void Update()
     {
+        // --- Debounced axis input ---
+        float horizontal = Input.GetAxisRaw("Horizontal");
+        float vertical = Input.GetAxisRaw("Vertical");
+        dir = Vector3.zero;
+
         if (juicy)
         {
-            if (_isRolling || _isJuicyHitOffActive) return; // block input while flying off
-            Vector3 dir = ReadCardinalKeyDown();
-            if (dir != Vector3.zero && _rollRoutine == null)
-                _rollRoutine = StartCoroutine(RollStep(dir)); // start tracked roll
+            // Only allow movement in one cardinal direction at a time
+            if (Mathf.Abs(horizontal) > Mathf.Abs(vertical))
+            {
+                // Debounce horizontal
+                if (prevHorizontal == 0 && Mathf.Abs(horizontal) > 0.5f)
+                    dir = horizontal > 0 ? Vector3.right : Vector3.left;
+            }
+            else if (Mathf.Abs(vertical) > 0.1f)
+            {
+                // Debounce vertical
+                if (prevVertical == 0 && Mathf.Abs(vertical) > 0.5f)
+                    dir = vertical > 0 ? Vector3.forward : Vector3.back;
+            }
+
+            // Juicy mode: only roll once per press, block if already rolling or hit-off is active
+            if (juicy)
+            {
+                if (!_isRolling && !_isJuicyHitOffActive && dir != Vector3.zero && _rollRoutine == null && _canMove)
+                {
+                    _canMove = false;
+                    _rollRoutine = StartCoroutine(RollStep(dir));
+                }
+                else if (Mathf.Abs(horizontal) < 0.1f && Mathf.Abs(vertical) < 0.1f)
+                {
+                    _canMove = true; // Reset on axis release
+                }
+            }
         }
         else
         {
-            // INSTANT JUMP: one cell per key press, no lerp
-            Vector3 dir = ReadCardinalKeyDown();
-            if (dir != Vector3.zero)
+            // Only allow movement in one cardinal direction at a time
+            if (!isMoving)
             {
-                Vector3 from = transform.position;
-                Vector3 to = from + dir * stepSize;
-                transform.position = to;
-                EmitMove(from, to, dir); // <<< fire movement event
+                if (Mathf.Abs(horizontal) > Mathf.Abs(vertical))
+                {
+                    // Debounce horizontal
+                    if (prevHorizontal == 0 && Mathf.Abs(horizontal) > 0.5f)
+                        dir = horizontal > 0 ? Vector3.right : Vector3.left;
+                }
+                else if (Mathf.Abs(vertical) > 0.1f)
+                {
+                    // Debounce vertical
+                    if (prevVertical == 0 && Mathf.Abs(vertical) > 0.5f)
+                        dir = vertical > 0 ? Vector3.forward : Vector3.back;
+                }
+                if (dir != Vector3.zero)
+                {
+                    targetPosition = transform.position + dir * stepSize;
+                    isMoving = true;
+                }
             }
-
             // Water grace period logic
             if (_waterGraceTimer > 0f)
             {
@@ -143,7 +189,7 @@ public class PlayerController : MonoBehaviour
                 if (_waterGraceTimer <= 0f)
                 {
                     // After grace period, check if still only touching water
-                    Collider[] hits = Physics.OverlapSphere(transform.position, 0.25f);
+                    Collider[] hits = Physics.OverlapSphere(transform.position, 0.1f);
                     bool stillTouchingWater = false, touchingLandOrWood = false;
                     foreach (var col in hits)
                     {
@@ -158,12 +204,25 @@ public class PlayerController : MonoBehaviour
                 }
             }
         }
+
+        // Update previous axis values for debouncing
+        prevHorizontal = Mathf.Abs(horizontal) > 0.1f ? horizontal : 0f;
+        prevVertical = Mathf.Abs(vertical) > 0.1f ? vertical : 0f;
     }
 
-    void FixedUpdate()
-    {
-        if (_onCarrier && _carrierTf != null && !_isJuicyHitOffActive)
-        {
+
+
+    void FixedUpdate() {
+        // No physics-based movement
+        if (!juicy && isMoving) {
+            Vector3 from = transform.position;
+            Vector3 to = targetPosition;
+            Vector3 moveDir = (to - from).normalized;
+            transform.position = to; // snap to grid
+            isMoving = false;
+            EmitMove(from, to, moveDir);
+        }
+        if (_onCarrier && _carrierTf != null && !_isJuicyHitOffActive) {
             Vector3 worldDelta = _carrierTf.position - _carrierLastPos;
             transform.position += worldDelta;
             _carrierLastPos = _carrierTf.position;
@@ -175,8 +234,6 @@ public class PlayerController : MonoBehaviour
     IEnumerator RollStep(Vector3 dir)
     {
         _isRolling = true;
-        bool originalKinematic = _rb.isKinematic;
-        _rb.isKinematic = true;
 
         float half = stepSize * 0.5f;
         Vector3 pivot = transform.position + (dir * half) + (Vector3.down * half);
@@ -201,11 +258,12 @@ public class PlayerController : MonoBehaviour
             yield return null;
         }
 
+        // Snap final rotation to nearest 90-degree increment to avoid floating-point drift
         Quaternion endDelta = Quaternion.AngleAxis(totalAngle, axis);
         Vector3 endPos = RotatePointAroundPivot(startPos, pivot, endDelta);
-        transform.SetPositionAndRotation(endPos, endDelta * startRot);
+        Quaternion snappedRot = SnapRotationTo90(endDelta * startRot);
+        transform.SetPositionAndRotation(endPos, snappedRot);
 
-        _rb.isKinematic = originalKinematic;
         _isRolling = false;
 
         // Emit movement now that the roll has completed
@@ -215,22 +273,22 @@ public class PlayerController : MonoBehaviour
         _rollRoutine = null;
     }
 
+    // Utility: Snap quaternion rotation to nearest 90-degree increment on each axis
+    Quaternion SnapRotationTo90(Quaternion rot)
+    {
+        Vector3 euler = rot.eulerAngles;
+        euler.x = Mathf.Round(euler.x / 90f) * 90f;
+        euler.y = Mathf.Round(euler.y / 90f) * 90f;
+        euler.z = Mathf.Round(euler.z / 90f) * 90f;
+        return Quaternion.Euler(euler);
+    }
+
     static Vector3 RotatePointAroundPivot(Vector3 point, Vector3 pivot, Quaternion delta)
     {
         return pivot + delta * (point - pivot);
     }
     #endregion
 
-    #region Input
-    Vector3 ReadCardinalKeyDown()
-    {
-        if (Input.GetKeyDown(KeyCode.W) || Input.GetKeyDown(KeyCode.UpArrow)) return Vector3.forward;
-        else if (Input.GetKeyDown(KeyCode.S) || Input.GetKeyDown(KeyCode.DownArrow)) return Vector3.back;
-        else if (Input.GetKeyDown(KeyCode.A) || Input.GetKeyDown(KeyCode.LeftArrow)) return Vector3.left;
-        else if (Input.GetKeyDown(KeyCode.D) || Input.GetKeyDown(KeyCode.RightArrow)) return Vector3.right;
-        else return Vector3.zero;
-    }
-    #endregion
 
     #region Death/Respawn & Collisions
     void OnCollisionEnter(Collision collision)
@@ -364,29 +422,33 @@ public class PlayerController : MonoBehaviour
     {
         ClearCarrierFollow();
 
-        // Hard stop any motion first
-        // Only set velocity/angVel if not kinematic
-        if (!_rb.isKinematic)
+        // Restore transform and physics state
+        transform.SetPositionAndRotation(_spawnPos, _spawnRot);
+        var col = GetComponent<Collider>();
+        if (_rb != null)
         {
+            _rb.isKinematic = true; // Always kinematic except during hit-off
             _rb.velocity = Vector3.zero;
             _rb.angularVelocity = Vector3.zero;
+            _rb.constraints = _originalConstraints;
         }
-
-        // Restore transform and constraints
-        transform.SetPositionAndRotation(_spawnPos, _spawnRot);
-        _rb.constraints = _originalConstraints;
+        // Re-enable collider and ensure it's not a trigger
+        if (col != null) {
+            col.enabled = true;
+            col.isTrigger = true;
+        }
 
         // Stop/clear known routines (targeted) and flags
         if (_rollRoutine != null) { StopCoroutine(_rollRoutine); _rollRoutine = null; }
         if (_hitOffRoutine != null) { StopCoroutine(_hitOffRoutine); _hitOffRoutine = null; }
         _isRolling = false;
         _isJuicyHitOffActive = false;
+        _canMove = true;
 
         // --- NEW: Surface Re-check ---
         Collider[] hits = Physics.OverlapSphere(transform.position, 0.25f);
         foreach (Collider hit in hits)
         {
-            Debug.Log("Respawn check hit: " + hit.name + " tag: " + hit.tag);
             if (hit.CompareTag(woodTag) || hit.CompareTag(landTag))
             {
                 HandleSurfaceOnEnter(hit);
@@ -405,14 +467,13 @@ public class PlayerController : MonoBehaviour
         {
             // Begin following motion (no parenting)
             _onCarrier = true;
-            _carrierTf = hit.attachedRigidbody != null ? hit.attachedRigidbody.transform : hit.transform;
+            _carrierTf = hit.transform;
             _carrierLastPos = _carrierTf.position;
 
             // Prefer reading mover speed from ObjectController (world units/sec)
             _carrierSpeed = Vector3.zero;
             var oc = hit.GetComponentInParent<ObjectController>();
             if (oc != null) _carrierSpeed = oc.Speed;
-            _rb.constraints = RigidbodyConstraints.FreezeRotation;
             return;
         }
     }
@@ -422,8 +483,6 @@ public class PlayerController : MonoBehaviour
         if ((hit.CompareTag(woodTag) || hit.CompareTag(landTag)) && _carrierTf == hit.transform)
         {
             ClearCarrierFollow();
-            // Leaving land: release rotation freeze
-            _rb.constraints = _originalConstraints;
 
             // If non-juicy, check if still touching water
             if (!juicy)
@@ -442,8 +501,8 @@ public class PlayerController : MonoBehaviour
                 }
             }
         }
-    // Reset water grace timer
-    _waterGraceTimer = 0f;
+        // Reset water grace timer
+        _waterGraceTimer = 0f;
     }
 
 
@@ -513,42 +572,38 @@ public class PlayerController : MonoBehaviour
         _isRolling = false;
         ClearCarrierFollow();
 
-        // Ensure physics is active and free to tumble
-        _rb.isKinematic = false;
+        // Dramatic physics-based knockback
+        _rb.isKinematic = false; // Only non-kinematic during hit-off
         _rb.constraints = RigidbodyConstraints.None;
-
-        // Zero out current motion before applying the blast
         _rb.velocity = Vector3.zero;
         _rb.angularVelocity = Vector3.zero;
 
-        // Compute a fun knockback direction: away from obstacle, plus a pop upwards
+        // Temporarily disable collider to avoid extra deaths
+        var col = GetComponent<Collider>();
+        if (col != null) col.enabled = false;
+
         Vector3 away = (transform.position - obstacle.position);
         away.y = 0f;
-        if (away.sqrMagnitude < 0.001f) away = Random.insideUnitSphere; // degenerate overlap
+        if (away.sqrMagnitude < 0.001f) away = Random.insideUnitSphere;
         away.Normalize();
-
-        Vector3 knockDir = (away + Vector3.up).normalized;
-
-        // Scale by configured strengths; give extra oomph if obstacle was fast
+        Vector3 knockDir = (away + Vector3.up * 1.5f).normalized;
         float speedBonus = Mathf.Max(0f, relativeSpeed) * relativeSpeedBoost;
-        float totalForceMag = Mathf.Min(hitBackForce + hitUpForce + speedBonus, maxTotalHitForce);
-
+        float totalForceMag = Mathf.Min(hitBackForce * 2f + hitUpForce * 2f + speedBonus * 2f, maxTotalHitForce * 2f);
         Vector3 force = knockDir * totalForceMag;
         _rb.AddForce(force, ForceMode.Impulse);
 
-        // Add some chaotic spin
+        // Add dramatic spin
         Vector3 randomTorque = new Vector3(
-            Random.Range(-1f, 1f),
-            Random.Range(-1f, 1f),
-            Random.Range(-1f, 1f)
-        ).normalized * hitTorque;
+            Random.Range(-2f, 2f),
+            Random.Range(-2f, 2f),
+            Random.Range(-2f, 2f)
+        ).normalized * hitTorque * 2f;
         _rb.AddTorque(randomTorque, ForceMode.Impulse);
 
         // Optional: trigger Animator / particles if present (non-destructive)
         var anim = GetComponent<Animator>();
         if (anim != null)
         {
-            // Check if the trigger parameter exists before setting it
             bool hasHitOff = false;
             foreach (var param in anim.parameters)
             {
