@@ -322,12 +322,34 @@ public class LevelManager : MonoBehaviour
             WebGLBridge.PostJSON("summary_complete", summaryComplete);
 
             // Game summary data
+            float difficulty = 1.0f;
+            bool juicy = true;
+            if (GameManager.Instance != null)
+            {
+                difficulty = GameManager.Instance.globalDifficulty;
+                juicy = GameManager.Instance.isJuicy;
+            }
+            else
+            {
+                var gmObj = GameObject.Find("GameManager");
+                if (gmObj != null)
+                {
+                    var gm = gmObj.GetComponent<GameManager>();
+                    if (gm != null)
+                    {
+                        difficulty = gm.globalDifficulty;
+                        juicy = gm.isJuicy;
+                    }
+                }
+            }
             var gameSummary = new GameSummary
             {
                 totalPoints = _highScore,
                 totalTime = GetTotalTime(),
                 totalDeaths = GetTotalDeaths(),
-                levelsCleared = _allSummaryJson.Count // number of level completions
+                levelsCleared = _allSummaryJson.Count, // number of level completions
+                difficultyLevel = difficulty,
+                isJuicy = juicy
             };
             string gameSummaryJson = JsonUtility.ToJson(gameSummary, true);
             WebGLBridge.PostJSON("game_complete", gameSummaryJson);
@@ -431,10 +453,12 @@ public class LevelManager : MonoBehaviour
     [System.Serializable]
     public class GameSummary
     {
-        public int totalPoints;
-        public double totalTime;
-        public int totalDeaths;
-        public int levelsCleared;
+    public int totalPoints;
+    public double totalTime;
+    public int totalDeaths;
+    public int levelsCleared;
+    public float difficultyLevel;
+    public bool isJuicy;
     }
 
     double GetTotalTime()
